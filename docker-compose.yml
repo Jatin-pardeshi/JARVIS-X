@@ -1,0 +1,139 @@
+version: '3.8'
+
+services:
+  # -----------------------------------
+  # 1. Database (PostgreSQL + pgvector)
+  # -----------------------------------
+  db:
+    image: ankane/pgvector:latest
+    container_name: jarvis_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: jarvisx
+    ports:
+      - "5432:5432"
+    volumes:
+      # Persist database data
+      - postgres_data:/var/lib/postgresql/data
+      # Auto-initialize the schema on first boot
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - jarvis_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d jarvisx"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # -----------------------------------
+  # 2. Caching & Message Broker (Redis)
+  # -----------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: jarvis_cache
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - jarvis_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # -----------------------------------
+  # 3. AI Inference Engine (Ollama)
+  # -----------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: jarvis_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      # Persist downloaded models (Llama3, Qwen, etc.) so they aren't lost on restart
+      - ollama_data:/root/.ollama
+    networks:
+      - jarvis_network
+    # Uncomment the 'deploy' section below if you are running on a machine with an NVIDIA GPU
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # -----------------------------------
+  # 4. Core Backend (FastAPI / LangGraph)
+  # -----------------------------------
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: jarvis_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PROJECT_NAME=JARVIS-X
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/jarvisx
+      - REDIS_URL=redis://redis:6379/0
+      # Pointing to the internal Docker network name for Ollama
+      - OLLAMA_BASE_URL=http://ollama:11434 
+      - DEFAULT_MODEL=llama3
+      - SECRET_KEY=CHANGE_THIS_TO_A_SECURE_RANDOM_STRING
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    networks:
+      - jarvis_network
+    # Mount the backend directory for live-reloading during development
+    volumes:
+      - ./backend:/app
+
+  # -----------------------------------
+  # 5. Frontend Dashboard (React / Tailwind)
+  # -----------------------------------
+  frontend:
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: jarvis_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Tell the frontend where to route API calls
+      - VITE_API_BASE_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - jarvis_network
+    # Mount the frontend directory for live-reloading during development
+    volumes:
+      - ./frontend:/app/src
+
+# -----------------------------------
+# Global Network and Volume Definitions
+# -----------------------------------
+networks:
+  jarvis_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: jarvis_postgres_data
+  redis_data:
+    name: jarvis_redis_data
+  ollama_data:
+    name: jarvis_ollama_data
