@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# Node
+node_modules/
+dist/
+npm-debug.log*
+
+# JARVIS Specific
+data/
+backend/data/
+
+# OS
+.DS_Store
+Thumbs.db
